@@ -1,0 +1,28 @@
+name: why
+version: 0.1.0
+manifest_version: 2
+api_version: 1
+description: >-
+  Ask why any line of agent-written code exists. Every time the agent writes or patches a file, Why
+  records the lines it wrote and the user request of that turn, locally. Then /why app.py:42 (or
+  `hermes why app.py:42`, or the agent's why_line tool) answers with the request, date, model and
+  session behind that line, and /why app.py shows which requests wrote which share of a file. Lines
+  are matched by their text, not their number, so they are found after they move. No model calls.
+author: salch-cred
+license: MIT
+homepage: https://github.com/salch-cred/why
+tags: [coding, provenance, code-review, history, git, explainability]
+requires_hermes: ">=0.23"
+
+provides_hooks:
+  - pre_llm_call
+  - post_tool_call
+
+provides_tools:
+  - why_line
+
+config_schema:
+  excerpt_chars:
+    type: int
+    default: 600
+    description: How many characters of each user request to keep with the lines it caused.
