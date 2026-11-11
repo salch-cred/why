@@ -32,19 +32,26 @@ def roots() -> list[Path]:
     return out
 
 
+def _readable(candidate: Path, known: set[str]) -> bool:
+    """Only a file Why recorded the agent writing, and not a link swapped in since."""
+    return key(str(candidate)) in known and candidate.is_file() and not candidate.is_symlink()
+
+
 def locate(path: str, store: Store) -> tuple[Optional[Path], list[str]]:
-    """The file the user means, and other recorded files that also match (when it is ambiguous)."""
+    """The recorded file the user means, and other recorded files that also match (when it is
+    ambiguous). Files Why has no record of are never opened, so it can't be used to read
+    arbitrary files such as credentials."""
+    known = set(store.known_paths())
     given = Path(os.path.expanduser(path))
     for candidate in ([given] if given.is_absolute() else [r / given for r in roots()]):
-        if candidate.is_file():
+        if _readable(candidate, known):
             return candidate, []
     tail = os.path.normcase(os.path.normpath(path)).lstrip(os.sep + "/")
-    matches = [p for p in store.known_paths()
-               if p == key(path) or p.endswith(os.sep + tail) or p.endswith("/" + tail)]
-    existing = [m for m in matches if Path(m).is_file()]
+    matches = [p for p in known if p == key(path) or p.endswith(os.sep + tail) or p.endswith("/" + tail)]
+    existing = [m for m in matches if _readable(Path(m), known)]
     if len(existing) == 1:
         return Path(existing[0]), []
-    return None, existing or matches
+    return None, sorted(existing or matches)
 
 
 def shown(path: str) -> str:
@@ -150,10 +157,12 @@ def answer(store: Store, query: str) -> str:
     path, number = parse(query)
     found, options = locate(path, store)
     if found is None:
-        if len(options) == 1 and not Path(options[0]).is_file():
-            return f"Why has a record for {shown(options[0])}, but that file no longer exists there."
+        if len(options) == 1:
+            return (f"Why has a record for {shown(options[0])}, but that file has been removed or replaced "
+                    "since, so it isn't read.")
         if options:
             return "More than one recorded file matches. Be more specific:\n" + "\n".join(
                 "  " + shown(o) for o in options[:10])
-        return f"Can't find {path}. Give the path from the project folder, or an absolute path."
+        return (f"Why has no record of {path}. It only answers for files the agent wrote while Why was "
+                "recording, and never opens any other file.")
     return explain_line(store, found, number) if number else explain_file(store, found)

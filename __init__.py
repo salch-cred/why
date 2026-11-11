@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -30,6 +31,9 @@ _CTX: Any = None
 _STORE: Optional[Store] = None
 _STORE_HOME: Optional[Path] = None
 WRITE_TOOLS = {"write_file", "patch"}
+_LOCK = threading.Lock()
+_TURNS: dict[tuple[str, str], tuple[str, str, str]] = {}   # requests held until their turn writes a file
+_LATEST: dict[str, str] = {}
 
 
 def _setting(name: str, default: Any) -> Any:
@@ -108,15 +112,29 @@ def _added(diff: str) -> str:
 
 def on_pre_llm_call(session_id: str = "", turn_id: str = "", user_message: Any = None,
                     model: str = "", platform: str = "", **_: Any) -> None:
+    """Hold this turn's request in memory. It is written to disk only if the turn writes a file,
+    so why.db never becomes a log of every message."""
     text = _text(user_message).strip()
     if not text:
         return None
     limit = int(_setting("excerpt_chars", 600) or 600)
-    try:
-        store().save_request(session_id or "", turn_id or "", text[:limit], model or "", platform or "")
-    except Exception:
-        pass
+    with _LOCK:
+        _TURNS[(session_id or "", turn_id or "")] = (text[:limit], model or "", platform or "")
+        _LATEST[session_id or ""] = turn_id or ""
+        while len(_TURNS) > 200:
+            _TURNS.pop(next(iter(_TURNS)))
     return None
+
+
+def _keep_request(session_id: str, turn_id: str) -> None:
+    """Save the request behind this turn, now that it has written a file."""
+    with _LOCK:
+        key_ = (session_id, turn_id)
+        if key_ not in _TURNS:
+            key_ = (session_id, _LATEST.get(session_id, ""))
+        held = _TURNS.pop(key_, None)
+    if held:
+        store().save_request(key_[0], key_[1], *held)
 
 
 def on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, status: str = "",
@@ -137,6 +155,7 @@ def on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None,
     if not isinstance(written, str) or not written.strip():
         return None
     try:
+        _keep_request(session_id or "", turn_id or "")
         store().save_edit(session_id=session_id or "", turn_id=turn_id or "", path=_where(raw, parsed),
                           tool=tool_name, written=L.prints(written))
     except Exception:
@@ -196,6 +215,9 @@ def _cli_run(args: Any) -> int:
 def register(ctx: "PluginContext") -> None:
     global _CTX
     _CTX = ctx
+    with _LOCK:
+        _TURNS.clear()
+        _LATEST.clear()
     ctx.register_hook("pre_llm_call", on_pre_llm_call)
     ctx.register_hook("post_tool_call", on_post_tool_call)
     ctx.register_command("why", why_command,

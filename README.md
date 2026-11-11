@@ -49,8 +49,8 @@ upload.py: 8 of 9 lines came from 2 requests:
 
 ## What it touches
 
-- **Stores locally:** the text of each request (the first 600 characters, set by `excerpt_chars`) and the lines the agent wrote, in `<hermes home>/plugin-data/why/why.db`. Nothing leaves your machine.
-- **Reads** the file you ask about, to find the line.
+- **Stores locally:** the lines the agent wrote, and the request (the first 600 characters, set by `excerpt_chars`) of each turn that wrote a file, in `<hermes home>/plugin-data/why/why.db`. Requests from turns that write nothing are held in memory only and never saved. Nothing leaves your machine.
+- **Reads only files it recorded the agent writing,** to find the line. Any other path, such as `.env` or `auth.json`, gets "no record" and is never opened. A recorded file that has since been replaced by a link isn't read either.
 - **No model calls, no network, no telemetry, no dependencies.**
 
 To forget everything, delete `why.db`.
@@ -71,7 +71,7 @@ plugins:
 pytest tests
 ```
 
-34 tests cover line matching after moves and hand edits, common lines, write and patch records, failed tools, path lookup, the `/why` views, the tool and the CLI.
+38 tests cover line matching after moves and hand edits, refusing files Why has no record of, common lines, write and patch records, failed tools, path lookup, the `/why` views, the tool and the CLI.
 
 ## License
 

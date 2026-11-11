@@ -179,7 +179,7 @@ def test_ambiguous_and_missing(ctx, tmp_path):
     write(ctx, str(tmp_path / "a" / "util.py"), "alpha_value = 1\n")
     write(ctx, str(tmp_path / "b" / "util.py"), "beta_value = 2\n")
     assert "More than one" in why_(ctx, "util.py:1")
-    assert "Can't find" in why_(ctx, "nothing.py:1")
+    assert "no record of nothing.py" in why_(ctx, "nothing.py:1")
 
 
 def test_line_out_of_range_and_blank(ctx):
@@ -230,4 +230,49 @@ def test_recorded_file_that_was_deleted(ctx, tmp_path):
     ask(ctx, "x")
     write(ctx, str(tmp_path / "lib" / "gone.py"), "soon_deleted = 1\n")
     os.remove(tmp_path / "lib" / "gone.py")
-    assert "no longer exists" in why_(ctx, "gone.py:1")
+    assert "removed or replaced" in why_(ctx, "gone.py:1")
+
+
+def test_files_it_has_no_record_of_are_never_read(ctx, tmp_path):
+    ask(ctx, "x")
+    write(ctx, "app.py", "recorded_line = 1\n")
+    secret = tmp_path / ".env"
+    secret.write_text("API_KEY=sk-live-very-secret\n", encoding="utf-8")
+    for query in (".env:1", str(secret) + ":1", str(secret), "~/.env:1"):
+        out = why_(ctx, query)
+        assert "sk-live" not in out and "no record" in out
+    schema, handler = ctx.tools["why_line"]
+    out = handler({"path": str(secret), "line": 1})
+    assert "sk-live" not in out and "no record" in out
+
+
+def test_recorded_file_swapped_for_a_link_is_not_read(ctx, tmp_path):
+    ask(ctx, "x")
+    write(ctx, "app.py", "recorded_line = 1\n")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOKEN=hunter2\n", encoding="utf-8")
+    os.remove("app.py")
+    try:
+        os.symlink(secret, "app.py")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks need extra rights here")
+    out = why_(ctx, "app.py:1")
+    assert "hunter2" not in out and "removed or replaced" in out
+
+
+def test_requests_are_saved_only_for_turns_that_write(ctx):
+    ask(ctx, "what's the weather like?", turn="T1")
+    ask(ctx, "add a config file", turn="T2")
+    write(ctx, "config.py", "TIMEOUT_SECONDS = 30\n", turn="T2")
+    rows = why.store()._db.execute("SELECT turn_id, text FROM requests").fetchall()
+    assert rows == [("T2", "add a config file")]
+    write(ctx, "other.py", "RETRIES_ALLOWED = 3\n", turn="T2")        # a second write in the turn
+    assert "add a config file" in why_(ctx, "other.py:1")
+
+
+def test_link_check_without_symlink_rights(ctx, monkeypatch):
+    ask(ctx, "x")
+    write(ctx, "app.py", "recorded_line = 1\n")
+    monkeypatch.setattr(type(why.explain.Path("x")), "is_symlink", lambda self: self.name == "app.py")
+    out = why_(ctx, "app.py:1")
+    assert "recorded_line" not in out and "removed or replaced" in out
